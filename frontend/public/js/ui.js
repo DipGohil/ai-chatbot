@@ -8,6 +8,7 @@ const els = {
   messageList: () => $("message-list"),
   welcome: () => $("welcome"),
   loading: () => $("loading-indicator"),
+  loadingStatus: () => $("loading-status"),
   chatTitle: () => $("chat-title"),
   promptInput: () => $("prompt-input"),
   sendBtn: () => $("send-btn"),
@@ -124,6 +125,17 @@ export function renderMessages() {
   });
 
   els.loading()?.classList.toggle("hidden", !isLoading);
+
+  const status = els.loadingStatus();
+  if (status && isLoading && store.loadingStartedAt) {
+    const seconds = Math.floor((Date.now() - store.loadingStartedAt) / 1000);
+    status.textContent =
+      seconds < 15
+        ? "Thinking… local models can take 30–90 seconds"
+        : `Still generating… ${seconds}s elapsed`;
+  } else if (status) {
+    status.textContent = "Thinking… local models can take 30–90 seconds";
+  }
 }
 
 export function renderHeader() {

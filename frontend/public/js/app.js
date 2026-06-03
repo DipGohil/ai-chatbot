@@ -1,4 +1,4 @@
-import { api, ApiError } from "./api.js";
+import { api, ApiError, CHAT_TIMEOUT_MS } from "./api.js";
 import { STORAGE_KEY } from "./config.js";
 import {
   createSessionId,
@@ -126,6 +126,28 @@ async function deleteSession(sessionId) {
   }
 }
 
+let chatAbortController = null;
+let loadingTimer = null;
+
+function clearLoadingTimer() {
+  if (loadingTimer) {
+    clearInterval(loadingTimer);
+    loadingTimer = null;
+  }
+}
+
+function startLoadingTimer() {
+  clearLoadingTimer();
+  loadingTimer = setInterval(() => render(), 1000);
+}
+
+function cancelChatRequest() {
+  chatAbortController?.abort();
+  clearLoadingTimer();
+  patchState({ isLoading: false, loadingStartedAt: null });
+  showToast("Request cancelled");
+}
+
 async function sendMessage(prompt) {
   const trimmed = prompt.trim();
   if (!trimmed || store.isLoading) return;
@@ -138,14 +160,23 @@ async function sendMessage(prompt) {
   }
 
   const userMessage = { role: "user", message: trimmed };
+  chatAbortController = new AbortController();
+  const timeoutId = setTimeout(() => chatAbortController?.abort(), CHAT_TIMEOUT_MS);
+
   patchState({
     messages: [...store.messages, userMessage],
     isLoading: true,
+    loadingStartedAt: Date.now(),
   });
+  startLoadingTimer();
   scrollToBottom();
 
   try {
-    const response = await api.chat(sessionId, trimmed);
+    const response = await api.chat(
+      sessionId,
+      trimmed,
+      chatAbortController.signal
+    );
     const sourceLabel =
       response.source === "redis"
         ? "Cached response"
@@ -159,7 +190,6 @@ async function sendMessage(prompt) {
 
     patchState({
       messages: [...store.messages, assistantMessage],
-      isLoading: false,
     });
 
     await refreshSessions();
@@ -179,14 +209,22 @@ async function sendMessage(prompt) {
 
     scrollToBottom();
   } catch (err) {
-    patchState({ isLoading: false });
-    showToast(
-      err instanceof ApiError
-        ? err.message
-        : "Failed to get a response. Is Ollama running?",
-      true
-    );
+    if (err.name === "AbortError") {
+      showToast("Request cancelled or timed out. Try again.", true);
+    } else {
+      showToast(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to get a response. Is Ollama running?",
+        true
+      );
+    }
     scrollToBottom();
+  } finally {
+    clearTimeout(timeoutId);
+    clearLoadingTimer();
+    chatAbortController = null;
+    patchState({ isLoading: false, loadingStartedAt: null });
   }
 }
 
@@ -247,6 +285,8 @@ function bindEvents() {
       if (prompt) sendMessage(prompt);
     });
   });
+
+  $("cancel-chat-btn")?.addEventListener("click", cancelChatRequest);
 }
 
 async function init() {

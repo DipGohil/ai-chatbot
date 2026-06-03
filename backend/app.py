@@ -1,7 +1,7 @@
 import os
 
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -12,6 +12,9 @@ from models import ChatHistory, Conversation, Session
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "ollama")
 OLLAMA_PORT = os.getenv("OLLAMA_PORT", "11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "600"))
+MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "800"))
+MAX_HISTORY_CHARS = int(os.getenv("MAX_HISTORY_CHARS", "4000"))
 OLLAMA_BASE_URL = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}"
 
 app = FastAPI(title="AI Chatbot Platform")
@@ -27,6 +30,18 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     session_id: str
     prompt: str
+
+
+def build_prompt(messages, prompt: str) -> str:
+    lines = []
+    for msg in messages:
+        text = (msg.message or "")[:MAX_MESSAGE_CHARS]
+        lines.append(f"{msg.role}: {text}")
+    lines.append(f"user: {prompt[:MAX_MESSAGE_CHARS]}")
+    history = "\n".join(lines)
+    if len(history) > MAX_HISTORY_CHARS:
+        history = history[-MAX_HISTORY_CHARS:]
+    return history
 
 @app.get("/")
 def home():
@@ -59,107 +74,125 @@ def chat(data: ChatRequest):
             "answer": cached_answer
         }
 
-    # Database Session
     db = SessionLocal()
 
-    existing_session = (
-        db.query(Session)
-        .filter(
-            Session.session_id == data.session_id
+    try:
+        existing_session = (
+            db.query(Session)
+            .filter(
+                Session.session_id == data.session_id
+            )
+            .first()
         )
-        .first()
-    )
 
-    if not existing_session:
+        if not existing_session:
+            db.add(
+                Session(
+                    session_id=data.session_id,
+                    title=data.prompt[:50]
+                )
+            )
+
+        messages = (
+            db.query(Conversation)
+            .filter(
+                Conversation.session_id == data.session_id
+            )
+            .order_by(
+                Conversation.id.desc()
+            )
+            .limit(10)
+            .all()
+        )
+
+        messages.reverse()
+        history = build_prompt(messages, data.prompt)
 
         db.add(
-            Session(
+            Conversation(
                 session_id=data.session_id,
-                title=data.prompt[:50]
+                role="user",
+                message=data.prompt
             )
         )
 
-    # Load Previous Messages
-    messages = (
-    db.query(Conversation)
-        .filter(
-            Conversation.session_id == data.session_id
+        try:
+            response = requests.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "prompt": history,
+                    "stream": False,
+                    "options": {
+                        "num_predict": 512,
+                    },
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+            response.raise_for_status()
+        except requests.Timeout as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    "Ollama took too long to respond. "
+                    "Try a shorter message or start a new chat."
+                ),
+            ) from exc
+        except requests.RequestException as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=502,
+                detail=f"Ollama request failed: {exc}",
+            ) from exc
+
+        result = response.json()
+        answer = result.get("response", "").strip()
+        if not answer:
+            db.rollback()
+            raise HTTPException(
+                status_code=502,
+                detail="Ollama returned an empty response.",
+            )
+
+        db.add(
+            Conversation(
+                session_id=data.session_id,
+                role="assistant",
+                message=answer
+            )
         )
-        .order_by(
-            Conversation.id.desc()
-        )
-        .limit(10)
-        .all()
-    )
 
-    messages.reverse()
-
-    # Build Context
-    history = ""
-
-    for msg in messages:
-        history += (
-            f"{msg.role}: "
-            f"{msg.message}\n"
+        redis_client.set(
+            cache_key,
+            answer,
+            ex=3600
         )
 
-    history += f"user: {data.prompt}"
-    
-    # Save User Message
-    db.add(
-        Conversation(
-            session_id=data.session_id,
-            role="user",
-            message=data.prompt
+        db.add(
+            ChatHistory(
+                question=data.prompt,
+                answer=answer
+            )
         )
-    )
 
-    # Call Ollama
-    response = requests.post(
-        f"{OLLAMA_BASE_URL}/api/generate",
-        json={
-            "model": OLLAMA_MODEL,
-            "prompt": history,
-            "stream": False,
-        },
-    )
+        db.commit()
 
-    result = response.json()
-
-    answer = result["response"]
-
-    # Save Assistant Message
-    db.add(
-        Conversation(
-            session_id=data.session_id,
-            role="assistant",
-            message=answer
-        )
-    )
-
-    # Save Cache
-    redis_client.set(
-        cache_key,
-        answer,
-        ex=3600     # Cache expires after 1 hour
-    )
-
-    # Save Chat History
-    chat = ChatHistory(
-        question=data.prompt,
-        answer=answer
-    )
-
-    db.add(chat)
-
-    # Commit Everything
-    db.commit()
-
-    return {
-        "source": "ollama",
-        "model": result["model"],
-        "answer": answer
-    }
+        return {
+            "source": "ollama",
+            "model": result.get("model", OLLAMA_MODEL),
+            "answer": answer
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chat failed: {exc}",
+        ) from exc
+    finally:
+        db.close()
 
 @app.get("/history")
 def history():

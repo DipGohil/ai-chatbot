@@ -8,6 +8,7 @@ export const store = {
   messages: [],
   activeSessionId: null,
   isLoading: false,
+  loadingStartedAt: null,
   isSidebarOpen: false,
   modelName: "phi3:mini",
   apiOnline: null,

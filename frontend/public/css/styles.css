@@ -476,6 +476,29 @@ button {
   padding: 1rem 1.25rem;
 }
 
+.loading-status {
+  margin-top: 0.75rem;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.loading-cancel {
+  margin-top: 0.65rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.loading-cancel:hover {
+  color: var(--danger);
+  border-color: rgba(240, 113, 120, 0.45);
+}
+
 .typing-dots {
   display: flex;
   gap: 5px;
