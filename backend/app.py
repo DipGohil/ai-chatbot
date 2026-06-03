@@ -2,6 +2,7 @@ import os
 
 import requests
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from cache import redis_client
@@ -13,7 +14,15 @@ OLLAMA_PORT = os.getenv("OLLAMA_PORT", "11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
 OLLAMA_BASE_URL = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}"
 
-app = FastAPI()
+app = FastAPI(title="AI Chatbot Platform")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ChatRequest(BaseModel):
     session_id: str
@@ -21,7 +30,10 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"message": "Hell yeah! docker project is running bruhh"}
+    return {
+        "message": "AI Chatbot Platform API is running",
+        "status": "ok",
+    }
 
 @app.get("/models")
 def models():
@@ -170,11 +182,12 @@ def memory(session_id: str):
 
     db = SessionLocal()
 
-    chats = db.query(
-        Conversation
-    ).filter(
-        Conversation.session_id == session_id
-    ).all()
+    chats = (
+        db.query(Conversation)
+        .filter(Conversation.session_id == session_id)
+        .order_by(Conversation.id.asc())
+        .all()
+    )
 
     return [
         {
@@ -189,9 +202,7 @@ def sessions():
 
     db = SessionLocal()
 
-    sessions = db.query(
-        Session
-    ).all()
+    sessions = db.query(Session).order_by(Session.id.desc()).all()
 
     return [
         {

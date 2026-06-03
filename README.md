@@ -1,51 +1,51 @@
-# AI Chatbot
+# AI Chatbot Platform
 
-A Docker-based AI chatbot API built with FastAPI, PostgreSQL, Redis, and Ollama.
+A Dockerized multi-container AI chatbot with a ChatGPT-style web UI, FastAPI backend, Ollama LLM inference, PostgreSQL persistence, and Redis caching.
+
+## Architecture
+
+| Service    | Role                          | Port  |
+|------------|-------------------------------|-------|
+| Frontend   | Nginx + static UI (`/api` proxy)| 3000 |
+| Backend    | FastAPI API layer             | 8000 |
+| Ollama     | Local LLM inference           | 11434 |
+| PostgreSQL | Persistent storage              | internal |
+| Redis      | Response cache (1h TTL)       | internal |
 
 ## Features
 
-- Chat endpoint with session memory and Redis caching
-- Conversation history and session management
-- Ollama integration for local LLM inference
-
-## Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- Git
+- **AI Chat** — Send prompts; FastAPI forwards to Ollama (`phi3:mini` by default)
+- **Conversation memory** — Last 10 messages per `session_id` used as context
+- **Redis caching** — Instant replies for repeated `session_id:prompt` pairs
+- **PostgreSQL** — Sessions, conversations, and chat history persist across restarts
+- **Web UI** — Sidebar sessions, new chat, delete, message bubbles, loading state, mobile layout
 
 ## Quick Start
 
-1. Clone the repository:
+1. Clone and configure environment:
 
    ```bash
    git clone <your-repo-url>
    cd ai-chatbot
-   ```
-
-2. Create your local environment file:
-
-   ```bash
    cp .env.example .env
    ```
 
-   Edit `.env` and set your own values (especially `POSTGRES_PASSWORD`).
-
-3. Start the stack:
+2. Start all services:
 
    ```bash
    docker compose up --build
    ```
 
-4. Pull the Ollama model (first run only):
+3. Pull the Ollama model (first run only):
 
    ```bash
    docker compose exec ollama ollama pull phi3:mini
    ```
 
-5. Open the API:
+4. Open the app:
 
-   - Health check: http://localhost:8000/
-   - API docs: http://localhost:8000/docs
+   - **Web UI:** http://localhost:3000
+   - **API:** http://localhost:8000/docs
 
 ## Environment Variables
 
@@ -53,54 +53,59 @@ A Docker-based AI chatbot API built with FastAPI, PostgreSQL, Redis, and Ollama.
 |----------|-------------|---------|
 | `POSTGRES_USER` | PostgreSQL username | `admin` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | *(required)* |
-| `POSTGRES_DB` | PostgreSQL database name | `chatdb` |
-| `POSTGRES_HOST` | PostgreSQL host (Docker service name) | `postgres` |
-| `POSTGRES_PORT` | PostgreSQL port | `5432` |
+| `POSTGRES_DB` | Database name | `chatdb` |
+| `POSTGRES_HOST` | Host (Docker service) | `postgres` |
+| `POSTGRES_PORT` | Port | `5432` |
 | `REDIS_HOST` | Redis host | `redis` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `OLLAMA_HOST` | Ollama host | `ollama` |
 | `OLLAMA_PORT` | Ollama port | `11434` |
-| `OLLAMA_MODEL` | Default model name | `phi3:mini` |
+| `OLLAMA_MODEL` | Default model | `phi3:mini` |
 
-> **Security note:** Never commit your `.env` file to Git. Only `.env.example` belongs in the repository.
+> Never commit `.env` to Git. Use `.env.example` as a template.
 
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/` | Health check |
-| `GET` | `/models` | List available Ollama models |
-| `POST` | `/chat` | Send a chat message |
-| `GET` | `/history` | Get all chat history |
-| `GET` | `/memory/{session_id}` | Get conversation for a session |
-| `GET` | `/sessions` | List all sessions |
-| `DELETE` | `/session/{session_id}` | Delete a session |
+| `GET` | `/models` | List Ollama models |
+| `POST` | `/chat` | Send message (`session_id`, `prompt`) |
+| `GET` | `/history` | All Q&A pairs |
+| `GET` | `/memory/{session_id}` | Session messages |
+| `GET` | `/sessions` | All sessions |
+| `DELETE` | `/session/{session_id}` | Delete session |
+
+The frontend calls these via `/api/*` (proxied to the backend by nginx).
 
 ## Project Structure
 
 ```
 .
+├── frontend/
+│   ├── public/
+│   │   ├── index.html
+│   │   ├── css/styles.css
+│   │   └── js/          # ES modules (api, store, ui, app)
+│   ├── nginx.conf
+│   └── Dockerfile
 ├── backend/
-│   ├── app.py          # FastAPI application
-│   ├── cache.py        # Redis client
-│   ├── database.py     # PostgreSQL connection
-│   ├── models.py       # SQLAlchemy models
-│   ├── Dockerfile
-│   └── requirements.txt
+│   ├── app.py
+│   ├── cache.py
+│   ├── database.py
+│   ├── models.py
+│   └── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
 ```
 
-## Upload to GitHub
+## Local Frontend Development
 
-```bash
-git init
-git add .
-git commit -m "Initial commit: AI chatbot with FastAPI and Docker"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<your-repo>.git
-git push -u origin main
+Serve `frontend/public` with any static server and point API calls at the backend:
+
+```html
+<script>window.__API_BASE__ = "http://localhost:8000";</script>
 ```
 
-After cloning on another machine, always run `cp .env.example .env` and fill in your secrets locally.
+Or use the Docker stack so `/api` proxies automatically.
