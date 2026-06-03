@@ -8,6 +8,7 @@ import {
   subscribe,
 } from "./store.js";
 import {
+  $,
   autoResizeTextarea,
   els,
   render,
@@ -249,7 +250,14 @@ function bindEvents() {
 }
 
 async function init() {
-  bindEvents();
+  try {
+    bindEvents();
+  } catch (err) {
+    console.error("Failed to bind UI events:", err);
+    showToast("UI failed to initialize. Please refresh the page.", true);
+    return;
+  }
+
   render();
 
   await Promise.all([checkHealth(), loadModelName(), refreshSessions()]);

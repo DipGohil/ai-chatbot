@@ -1,6 +1,6 @@
 import { store } from "./store.js";
 
-const $ = (id) => document.getElementById(id);
+export const $ = (id) => document.getElementById(id);
 
 const els = {
   sessionList: () => $("session-list"),
