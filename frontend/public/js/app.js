@@ -12,9 +12,12 @@ import {
   autoResizeTextarea,
   els,
   render,
+  renderChanged,
   scrollToBottom,
   setSidebarOpen,
   showToast,
+  updateComposer,
+  updateLoadingStatus,
 } from "./ui.js";
 
 function persistActiveSession() {
@@ -138,7 +141,7 @@ function clearLoadingTimer() {
 
 function startLoadingTimer() {
   clearLoadingTimer();
-  loadingTimer = setInterval(() => render(), 1000);
+  loadingTimer = setInterval(() => updateLoadingStatus(), 1000);
 }
 
 function cancelChatRequest() {
@@ -229,7 +232,7 @@ async function sendMessage(prompt) {
 }
 
 function bindEvents() {
-  subscribe(() => render());
+  subscribe(() => renderChanged());
 
   $("new-chat-btn")?.addEventListener("click", startNewChat);
 
@@ -269,7 +272,7 @@ function bindEvents() {
 
   input?.addEventListener("input", () => {
     autoResizeTextarea(input);
-    render();
+    updateComposer();
   });
 
   input?.addEventListener("keydown", (e) => {

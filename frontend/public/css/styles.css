@@ -289,8 +289,7 @@ button {
   height: var(--header-h);
   padding: 0 1.25rem;
   border-bottom: 1px solid var(--border);
-  background: rgba(15, 18, 24, 0.85);
-  backdrop-filter: blur(12px);
+  background: var(--bg-main);
 }
 
 .main__menu {
@@ -408,6 +407,9 @@ button {
   display: flex;
   gap: 0.85rem;
   margin-bottom: 1.25rem;
+}
+
+.message--enter {
   animation: msgIn 0.35s ease-out;
 }
 
@@ -545,8 +547,7 @@ button {
   z-index: 2;
   padding: 0.75rem 1rem 1.25rem;
   border-top: 1px solid var(--border);
-  background: rgba(15, 18, 24, 0.9);
-  backdrop-filter: blur(12px);
+  background: var(--bg-main);
 }
 
 .composer__form {
@@ -577,8 +578,10 @@ button {
   background: transparent;
   max-height: 160px;
   min-height: 24px;
+  height: 24px;
   line-height: 1.5;
   padding: 0.35rem 0;
+  overflow-y: auto;
 }
 
 .composer__input:focus {

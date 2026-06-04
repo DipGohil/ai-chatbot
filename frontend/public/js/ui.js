@@ -19,6 +19,31 @@ const els = {
   toast: () => $("toast"),
 };
 
+let lastSessionsListKey = "";
+let lastActiveSessionId = null;
+let lastMessagesKey = "";
+let lastMessagesSessionId = null;
+let lastHeaderKey = "";
+let lastStatusKey = "";
+let lastLoadingVisible = null;
+
+function sessionsListKey() {
+  return store.sessions.map((s) => `${s.session_id}:${s.title}`).join("|");
+}
+
+function messagesKey() {
+  return store.messages
+    .map((m) => `${m.role}\u0001${m.message}\u0001${m.meta ?? ""}`)
+    .join("\u0002");
+}
+
+function headerKey() {
+  const active = store.sessions.find(
+    (s) => s.session_id === store.activeSessionId
+  );
+  return `${store.activeSessionId ?? ""}:${active?.title ?? ""}`;
+}
+
 export function showToast(message, isError = false) {
   const toast = els.toast();
   toast.textContent = message;
@@ -34,16 +59,30 @@ export function setSidebarOpen(open) {
   els.overlay()?.setAttribute("aria-hidden", String(!open));
 }
 
+function updateSessionActiveState() {
+  const list = els.sessionList();
+  if (!list) return;
+
+  list.querySelectorAll(".session-item").forEach((item) => {
+    const sessionId = item.querySelector(".session-item__btn")?.dataset.sessionId;
+    item.classList.toggle(
+      "session-item--active",
+      sessionId === store.activeSessionId
+    );
+  });
+}
+
 export function renderSessions() {
   const list = els.sessionList();
   const empty = els.sessionsEmpty();
   if (!list) return;
 
-  list.innerHTML = "";
-  const { sessions, activeSessionId } = store;
+  list.replaceChildren();
+  const { sessions } = store;
 
   if (sessions.length === 0) {
     empty?.classList.remove("hidden");
+    lastSessionsListKey = "";
     return;
   }
 
@@ -52,7 +91,7 @@ export function renderSessions() {
   sessions.forEach((session) => {
     const li = document.createElement("li");
     li.className = "session-item";
-    if (session.session_id === activeSessionId) {
+    if (session.session_id === store.activeSessionId) {
       li.classList.add("session-item--active");
     }
 
@@ -68,11 +107,15 @@ export function renderSessions() {
     deleteBtn.className = "session-item__delete icon-btn";
     deleteBtn.dataset.sessionId = session.session_id;
     deleteBtn.setAttribute("aria-label", "Delete conversation");
-    deleteBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>`;
+    deleteBtn.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
 
     li.append(selectBtn, deleteBtn);
     list.appendChild(li);
   });
+
+  lastSessionsListKey = sessionsListKey();
+  lastActiveSessionId = store.activeSessionId;
 }
 
 function escapeHtml(text) {
@@ -85,57 +128,99 @@ function formatMessage(text) {
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
-export function renderMessages() {
-  const list = els.messageList();
+function createMessageElement(msg, animate = false) {
+  const li = document.createElement("li");
+  const isUser = msg.role === "user";
+  li.className = `message message--${isUser ? "user" : "assistant"}`;
+  if (animate) {
+    li.classList.add("message--enter");
+  }
+
+  const avatar = document.createElement("div");
+  avatar.className = "message__avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.textContent = isUser ? "You" : "AI";
+
+  const body = document.createElement("div");
+  body.className = "message__body";
+  body.innerHTML = formatMessage(msg.message);
+
+  if (msg.meta) {
+    const meta = document.createElement("span");
+    meta.className = "message__meta";
+    meta.textContent = msg.meta;
+    body.appendChild(meta);
+  }
+
+  li.append(avatar, body);
+  return li;
+}
+
+function syncWelcomeAndListVisibility() {
   const welcome = els.welcome();
-  const { messages, isLoading } = store;
+  const list = els.messageList();
+  if (!welcome || !list) return;
 
-  if (!list || !welcome) return;
-
-  const hasMessages = messages.length > 0;
-
-  welcome.classList.toggle("hidden", hasMessages || isLoading);
+  const hasMessages = store.messages.length > 0;
+  welcome.classList.toggle("hidden", hasMessages || store.isLoading);
   list.classList.toggle("hidden", !hasMessages);
+}
 
-  list.innerHTML = "";
+function rebuildMessages(animateLast = false) {
+  const list = els.messageList();
+  if (!list) return;
 
-  messages.forEach((msg) => {
-    const li = document.createElement("li");
-    const isUser = msg.role === "user";
-    li.className = `message message--${isUser ? "user" : "assistant"}`;
-
-    const avatar = document.createElement("div");
-    avatar.className = "message__avatar";
-    avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = isUser ? "You" : "AI";
-
-    const body = document.createElement("div");
-    body.className = "message__body";
-    body.innerHTML = formatMessage(msg.message);
-
-    if (msg.meta) {
-      const meta = document.createElement("span");
-      meta.className = "message__meta";
-      meta.textContent = msg.meta;
-      body.appendChild(meta);
-    }
-
-    li.append(avatar, body);
-    list.appendChild(li);
+  list.replaceChildren();
+  store.messages.forEach((msg, index) => {
+    const animate =
+      animateLast && index === store.messages.length - 1 && store.messages.length > 0;
+    list.appendChild(createMessageElement(msg, animate));
   });
 
-  els.loading()?.classList.toggle("hidden", !isLoading);
+  lastMessagesKey = messagesKey();
+  lastMessagesSessionId = store.activeSessionId;
+  syncWelcomeAndListVisibility();
+  updateLoadingStatus();
+}
 
-  const status = els.loadingStatus();
-  if (status && isLoading && store.loadingStartedAt) {
-    const seconds = Math.floor((Date.now() - store.loadingStartedAt) / 1000);
-    status.textContent =
-      seconds < 15
-        ? "Thinking… local models can take 30–90 seconds"
-        : `Still generating… ${seconds}s elapsed`;
-  } else if (status) {
-    status.textContent = "Thinking… local models can take 30–90 seconds";
+function appendMessages(fromIndex, animate = true) {
+  const list = els.messageList();
+  if (!list) return;
+
+  for (let i = fromIndex; i < store.messages.length; i += 1) {
+    list.appendChild(createMessageElement(store.messages[i], animate));
   }
+
+  lastMessagesKey = messagesKey();
+  syncWelcomeAndListVisibility();
+  updateLoadingStatus();
+}
+
+export function renderMessages() {
+  const list = els.messageList();
+  if (!list) return;
+
+  const sessionChanged = lastMessagesSessionId !== store.activeSessionId;
+  const key = messagesKey();
+  const previousCount = list.children.length;
+
+  if (sessionChanged || key !== lastMessagesKey) {
+    if (
+      !sessionChanged &&
+      key.startsWith(lastMessagesKey) &&
+      store.messages.length > previousCount &&
+      previousCount > 0
+    ) {
+      appendMessages(previousCount, true);
+      return;
+    }
+
+    rebuildMessages(true);
+    return;
+  }
+
+  syncWelcomeAndListVisibility();
+  updateLoadingStatus();
 }
 
 export function renderHeader() {
@@ -153,15 +238,51 @@ export function renderHeader() {
   } else {
     title.textContent = "AI Chatbot Platform";
   }
+
+  lastHeaderKey = headerKey();
 }
 
-export function renderComposer() {
-  const input = els.promptInput();
+export function updateComposer() {
   const sendBtn = els.sendBtn();
-  if (!input || !sendBtn) return;
+  if (!sendBtn) return;
 
-  const hasText = input.value.trim().length > 0;
-  sendBtn.disabled = !hasText || store.isLoading;
+  const input = els.promptInput();
+  const hasText = (input?.value.trim().length ?? 0) > 0;
+  const shouldDisable = !hasText || store.isLoading;
+  if (sendBtn.disabled !== shouldDisable) {
+    sendBtn.disabled = shouldDisable;
+  }
+}
+
+export function updateLoadingStatus() {
+  const loading = els.loading();
+  const status = els.loadingStatus();
+  if (!loading || !status) return;
+
+  const visible = store.isLoading;
+  if (lastLoadingVisible !== visible) {
+    loading.classList.toggle("hidden", !visible);
+    lastLoadingVisible = visible;
+  }
+
+  if (!visible) {
+    if (status.textContent !== "Thinking… local models can take 30–90 seconds") {
+      status.textContent = "Thinking… local models can take 30–90 seconds";
+    }
+    return;
+  }
+
+  let nextText = "Thinking… local models can take 30–90 seconds";
+  if (store.loadingStartedAt) {
+    const seconds = Math.floor((Date.now() - store.loadingStartedAt) / 1000);
+    if (seconds >= 15) {
+      nextText = `Still generating… ${seconds}s elapsed`;
+    }
+  }
+
+  if (status.textContent !== nextText) {
+    status.textContent = nextText;
+  }
 }
 
 export function renderStatus() {
@@ -184,13 +305,59 @@ export function renderStatus() {
   if (badge && store.modelName) {
     badge.textContent = store.modelName;
   }
+
+  lastStatusKey = `${store.apiOnline}|${store.modelName}`;
 }
 
+/** Update only the parts of the UI whose data changed. */
+export function renderChanged() {
+  const listKey = sessionsListKey();
+
+  if (listKey !== lastSessionsListKey) {
+    renderSessions();
+    renderHeader();
+  } else if (store.activeSessionId !== lastActiveSessionId) {
+    updateSessionActiveState();
+    lastActiveSessionId = store.activeSessionId;
+    if (headerKey() !== lastHeaderKey) {
+      renderHeader();
+    }
+  } else if (headerKey() !== lastHeaderKey) {
+    renderHeader();
+  }
+
+  const msgKey = messagesKey();
+  const sessionChanged = lastMessagesSessionId !== store.activeSessionId;
+
+  if (sessionChanged || msgKey !== lastMessagesKey) {
+    renderMessages();
+  } else {
+    syncWelcomeAndListVisibility();
+  }
+
+  updateComposer();
+  updateLoadingStatus();
+
+  const statusKey = `${store.apiOnline}|${store.modelName}`;
+  if (statusKey !== lastStatusKey) {
+    renderStatus();
+  }
+}
+
+/** Full initial paint (used once on startup). */
 export function render() {
+  lastSessionsListKey = "";
+  lastActiveSessionId = null;
+  lastMessagesKey = "";
+  lastMessagesSessionId = null;
+  lastHeaderKey = "";
+  lastStatusKey = "";
+  lastLoadingVisible = null;
+
   renderSessions();
-  renderMessages();
+  rebuildMessages(false);
   renderHeader();
-  renderComposer();
+  updateComposer();
   renderStatus();
 }
 
@@ -203,8 +370,12 @@ export function scrollToBottom() {
 }
 
 export function autoResizeTextarea(textarea) {
-  textarea.style.height = "auto";
-  textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+  const maxHeight = 160;
+  textarea.style.height = "0px";
+  const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+  if (textarea.offsetHeight !== nextHeight) {
+    textarea.style.height = `${nextHeight}px`;
+  }
 }
 
 export { els };
