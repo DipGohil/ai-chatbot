@@ -5,6 +5,11 @@ export const $ = (id) => document.getElementById(id);
 const els = {
   sessionList: () => $("session-list"),
   sessionsEmpty: () => $("sessions-empty"),
+  modelsEmpty: () => $("models-empty"),
+  modelSelect: () => $("model-select"),
+  modelDropdownWrap: () => $("model-dropdown-wrap"),
+  modelActivateSpinner: () => $("model-activate-spinner"),
+  modelActivateLabel: () => $("model-activate-label"),
   messageList: () => $("message-list"),
   welcome: () => $("welcome"),
   loading: () => $("loading-indicator"),
@@ -12,8 +17,8 @@ const els = {
   chatTitle: () => $("chat-title"),
   promptInput: () => $("prompt-input"),
   sendBtn: () => $("send-btn"),
-  modelBadge: () => $("model-badge"),
   statusDot: () => $("status-dot"),
+  apiStatusLabel: () => $("api-status-label"),
   sidebar: () => $("sidebar"),
   overlay: () => $("sidebar-overlay"),
   toast: () => $("toast"),
@@ -21,11 +26,17 @@ const els = {
 
 let lastSessionsListKey = "";
 let lastActiveSessionId = null;
+let lastModelsListKey = "";
+let lastModelUiKey = "";
 let lastMessagesKey = "";
 let lastMessagesSessionId = null;
 let lastHeaderKey = "";
 let lastStatusKey = "";
 let lastLoadingVisible = null;
+
+function modelsListKey() {
+  return store.models.map((m) => `${m.name}:${m.size ?? ""}`).join("|");
+}
 
 function sessionsListKey() {
   return store.sessions.map((s) => `${s.session_id}:${s.title}`).join("|");
@@ -70,6 +81,79 @@ function updateSessionActiveState() {
       sessionId === store.activeSessionId
     );
   });
+}
+
+function modelUiKey() {
+  return [
+    modelsListKey(),
+    store.selectedModel ?? "",
+    store.activeModel ?? "",
+    store.isActivatingModel,
+    store.isLoading,
+  ].join("|");
+}
+
+export function renderModelDropdown() {
+  const select = els.modelSelect();
+  const empty = els.modelsEmpty();
+  const wrap = els.modelDropdownWrap();
+  const spinner = els.modelActivateSpinner();
+  const label = els.modelActivateLabel();
+  if (!select) return;
+
+  const { models } = store;
+  const isActivating = store.isActivatingModel;
+
+  if (models.length === 0) {
+    empty?.classList.remove("hidden");
+    select.disabled = true;
+    select.replaceChildren();
+    wrap?.classList.remove("model-dropdown-wrap--loading");
+    spinner?.classList.add("hidden");
+    label?.classList.add("hidden");
+    lastModelsListKey = "";
+    lastModelUiKey = "";
+    return;
+  }
+
+  empty?.classList.add("hidden");
+
+  const names = models.map((m) => m.name);
+  const currentOptions = [...select.options].map((o) => o.value);
+  if (currentOptions.join("|") !== names.join("|")) {
+    select.replaceChildren();
+    models.forEach((model) => {
+      const option = document.createElement("option");
+      option.value = model.name;
+      const sizeGb =
+        model.size && !Number.isNaN(model.size)
+          ? ` (${(model.size / 1e9).toFixed(1)} GB)`
+          : "";
+      option.textContent = `${model.name}${sizeGb}`;
+      select.appendChild(option);
+    });
+  }
+
+  if (store.selectedModel && select.value !== store.selectedModel) {
+    select.value = store.selectedModel;
+  }
+
+  select.disabled =
+    isActivating || store.isLoading || models.length === 0;
+
+  wrap?.classList.toggle("model-dropdown-wrap--loading", isActivating);
+  spinner?.classList.toggle("hidden", !isActivating);
+  spinner?.setAttribute("aria-hidden", String(!isActivating));
+
+  if (label) {
+    label.classList.toggle("hidden", !isActivating);
+    if (isActivating) {
+      label.textContent = `Activating ${store.selectedModel ?? "model"}…`;
+    }
+  }
+
+  lastModelsListKey = modelsListKey();
+  lastModelUiKey = modelUiKey();
 }
 
 export function renderSessions() {
@@ -248,7 +332,11 @@ export function updateComposer() {
 
   const input = els.promptInput();
   const hasText = (input?.value.trim().length ?? 0) > 0;
-  const shouldDisable = !hasText || store.isLoading;
+  const shouldDisable =
+    !hasText ||
+    store.isLoading ||
+    store.isActivatingModel ||
+    !store.selectedModel;
   if (sendBtn.disabled !== shouldDisable) {
     sendBtn.disabled = shouldDisable;
   }
@@ -272,11 +360,12 @@ export function updateLoadingStatus() {
     return;
   }
 
-  let nextText = "Thinking… local models can take 30–90 seconds";
+  const modelLabel = store.selectedModel ?? "model";
+  let nextText = `Generating with ${modelLabel}…`;
   if (store.loadingStartedAt) {
     const seconds = Math.floor((Date.now() - store.loadingStartedAt) / 1000);
-    if (seconds >= 15) {
-      nextText = `Still generating… ${seconds}s elapsed`;
+    if (seconds >= 10) {
+      nextText = `Still generating (${seconds}s) — ${modelLabel} on CPU can be slow`;
     }
   }
 
@@ -287,30 +376,37 @@ export function updateLoadingStatus() {
 
 export function renderStatus() {
   const dot = els.statusDot();
-  const badge = els.modelBadge();
+  const label = els.apiStatusLabel();
   if (!dot) return;
 
   dot.classList.remove("status-dot--ok", "status-dot--error");
 
+  let statusText = "Checking API…";
   if (store.apiOnline === true) {
     dot.classList.add("status-dot--ok");
     dot.title = "API connected";
+    statusText = `${store.models.length} model${store.models.length === 1 ? "" : "s"} available`;
   } else if (store.apiOnline === false) {
     dot.classList.add("status-dot--error");
     dot.title = "API unreachable";
+    statusText = "API offline";
   } else {
     dot.title = "Checking API...";
   }
 
-  if (badge && store.modelName) {
-    badge.textContent = store.modelName;
+  if (label && label.textContent !== statusText) {
+    label.textContent = statusText;
   }
 
-  lastStatusKey = `${store.apiOnline}|${store.modelName}`;
+  lastStatusKey = `${store.apiOnline}|${store.models.length}`;
 }
 
 /** Update only the parts of the UI whose data changed. */
 export function renderChanged() {
+  if (modelUiKey() !== lastModelUiKey) {
+    renderModelDropdown();
+  }
+
   const listKey = sessionsListKey();
 
   if (listKey !== lastSessionsListKey) {
@@ -338,7 +434,7 @@ export function renderChanged() {
   updateComposer();
   updateLoadingStatus();
 
-  const statusKey = `${store.apiOnline}|${store.modelName}`;
+  const statusKey = `${store.apiOnline}|${store.models.length}|${store.activeModel ?? ""}`;
   if (statusKey !== lastStatusKey) {
     renderStatus();
   }
@@ -348,12 +444,15 @@ export function renderChanged() {
 export function render() {
   lastSessionsListKey = "";
   lastActiveSessionId = null;
+  lastModelsListKey = "";
+  lastModelUiKey = "";
   lastMessagesKey = "";
   lastMessagesSessionId = null;
   lastHeaderKey = "";
   lastStatusKey = "";
   lastLoadingVisible = null;
 
+  renderModelDropdown();
   renderSessions();
   rebuildMessages(false);
   renderHeader();

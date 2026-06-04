@@ -41,6 +41,10 @@ services:
     ports:
       - "11434:11434"
 
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: "5m"
+
     volumes:
       - ollama_data:/root/.ollama
   

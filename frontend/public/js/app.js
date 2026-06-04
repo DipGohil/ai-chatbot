@@ -1,5 +1,5 @@
 import { api, ApiError, CHAT_TIMEOUT_MS } from "./api.js";
-import { STORAGE_KEY } from "./config.js";
+import { MODEL_STORAGE_KEY, STORAGE_KEY } from "./config.js";
 import {
   createSessionId,
   getActiveSession,
@@ -28,6 +28,12 @@ function persistActiveSession() {
   }
 }
 
+function persistSelectedModel() {
+  if (store.selectedModel) {
+    localStorage.setItem(MODEL_STORAGE_KEY, store.selectedModel);
+  }
+}
+
 async function checkHealth() {
   try {
     await api.health();
@@ -37,13 +43,48 @@ async function checkHealth() {
   }
 }
 
-async function loadModelName() {
+async function loadModels(showFeedback = false) {
   try {
     const data = await api.models();
-    const first = data?.models?.[0]?.name;
-    if (first) patchState({ modelName: first });
-  } catch {
-    /* model badge keeps default */
+    const models = Array.isArray(data?.models) ? data.models : [];
+    const defaultModel = data?.default ?? store.defaultModel;
+
+    let selected = localStorage.getItem(MODEL_STORAGE_KEY);
+    if (!selected || !models.some((m) => m.name === selected)) {
+      selected =
+        models.find((m) => m.name === defaultModel)?.name ??
+        models[0]?.name ??
+        defaultModel;
+    }
+
+    patchState({
+      models,
+      selectedModel: selected,
+      activeModel: data?.active ?? store.activeModel,
+      defaultModel,
+      apiOnline: true,
+    });
+    persistSelectedModel();
+
+    if (selected && models.some((m) => m.name === selected)) {
+      activateModel(selected, { quiet: true });
+    }
+
+    if (showFeedback) {
+      showToast(
+        models.length
+          ? `Loaded ${models.length} model${models.length === 1 ? "" : "s"}`
+          : "No models installed in Ollama"
+      );
+    }
+  } catch (err) {
+    patchState({ apiOnline: false });
+    if (showFeedback || store.models.length === 0) {
+      showToast(
+        err instanceof ApiError ? err.message : "Failed to load models",
+        true
+      );
+    }
   }
 }
 
@@ -75,6 +116,84 @@ async function loadSessionMemory(sessionId) {
       err instanceof ApiError ? err.message : "Failed to load conversation",
       true
     );
+  }
+}
+
+let modelActivateController = null;
+let activateGeneration = 0;
+
+async function activateModel(modelName, { quiet = false } = {}) {
+  if (!modelName) return;
+
+  if (
+    modelName === store.activeModel &&
+    modelName === store.selectedModel &&
+    !store.isActivatingModel
+  ) {
+    persistSelectedModel();
+    return;
+  }
+
+  if (store.isLoading) return;
+
+  const generation = ++activateGeneration;
+  const previousSelected = store.selectedModel;
+  const previousActive = store.activeModel;
+
+  modelActivateController?.abort();
+  modelActivateController = new AbortController();
+
+  patchState({
+    isActivatingModel: true,
+    selectedModel: modelName,
+  });
+
+  try {
+    const result = await api.activateModel(
+      modelName,
+      modelActivateController.signal
+    );
+
+    if (generation !== activateGeneration) return;
+
+    const unloaded = result.unloaded?.length
+      ? ` (unloaded ${result.unloaded.join(", ")})`
+      : "";
+
+    patchState({
+      selectedModel: modelName,
+      activeModel: result.active ?? modelName,
+      isActivatingModel: false,
+    });
+    persistSelectedModel();
+
+    if (!quiet) {
+      showToast(`${modelName} is now active${unloaded}`);
+    }
+  } catch (err) {
+    if (generation !== activateGeneration) return;
+
+    if (err.name !== "AbortError") {
+      patchState({
+        selectedModel: previousSelected,
+        activeModel: previousActive,
+      });
+
+      const select = $("model-select");
+      if (select && previousSelected) {
+        select.value = previousSelected;
+      }
+
+      showToast(
+        err instanceof ApiError ? err.message : "Failed to activate model",
+        true
+      );
+    }
+  } finally {
+    if (generation === activateGeneration) {
+      patchState({ isActivatingModel: false });
+      modelActivateController = null;
+    }
   }
 }
 
@@ -155,6 +274,22 @@ async function sendMessage(prompt) {
   const trimmed = prompt.trim();
   if (!trimmed || store.isLoading) return;
 
+  if (!store.selectedModel) {
+    showToast("Select a model before chatting", true);
+    return;
+  }
+
+  if (store.isActivatingModel) {
+    showToast("Wait for the model to finish loading", true);
+    return;
+  }
+
+  if (store.activeModel !== store.selectedModel) {
+    showToast("Activating model, please try again in a moment", true);
+    activateModel(store.selectedModel, { quiet: true });
+    return;
+  }
+
   let sessionId = store.activeSessionId;
   if (!sessionId) {
     sessionId = createSessionId();
@@ -178,12 +313,13 @@ async function sendMessage(prompt) {
     const response = await api.chat(
       sessionId,
       trimmed,
+      store.selectedModel,
       chatAbortController.signal
     );
     const sourceLabel =
       response.source === "redis"
-        ? "Cached response"
-        : `via ${response.model ?? store.modelName}`;
+        ? `Cached · ${response.model ?? store.selectedModel}`
+        : `via ${response.model ?? store.selectedModel}`;
 
     const assistantMessage = {
       role: "assistant",
@@ -191,8 +327,9 @@ async function sendMessage(prompt) {
       meta: sourceLabel,
     };
 
+    const updatedMessages = [...store.messages, assistantMessage];
     patchState({
-      messages: [...store.messages, assistantMessage],
+      messages: updatedMessages,
     });
 
     await refreshSessions();
@@ -235,6 +372,14 @@ function bindEvents() {
   subscribe(() => renderChanged());
 
   $("new-chat-btn")?.addEventListener("click", startNewChat);
+
+  $("refresh-models-btn")?.addEventListener("click", () =>
+    loadModels(true)
+  );
+
+  $("model-select")?.addEventListener("change", (e) => {
+    activateModel(e.target.value);
+  });
 
   $("sidebar-toggle")?.addEventListener("click", () =>
     setSidebarOpen(true)
@@ -303,10 +448,11 @@ async function init() {
 
   render();
 
-  await Promise.all([checkHealth(), loadModelName(), refreshSessions()]);
+  await Promise.all([checkHealth(), loadModels(), refreshSessions()]);
 
   const saved = localStorage.getItem(STORAGE_KEY);
-  const sessionExists = saved && store.sessions.some((s) => s.session_id === saved);
+  const sessionExists =
+    saved && store.sessions.some((s) => s.session_id === saved);
 
   if (sessionExists) {
     await selectSession(saved);

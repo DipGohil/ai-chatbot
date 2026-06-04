@@ -47,6 +47,14 @@ A Dockerized multi-container AI chatbot with a ChatGPT-style web UI, FastAPI bac
    - **Web UI:** http://localhost:3000
    - **API:** http://localhost:8000/docs
 
+5. Add more models (optional):
+
+   ```bash
+   docker compose exec ollama ollama pull llama3.2
+   ```
+
+   Refresh the model list in the sidebar — new models appear automatically.
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -69,8 +77,9 @@ A Dockerized multi-container AI chatbot with a ChatGPT-style web UI, FastAPI bac
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/` | Health check |
-| `GET` | `/models` | List Ollama models |
-| `POST` | `/chat` | Send message (`session_id`, `prompt`) |
+| `GET` | `/models` | List installed Ollama models + which is loaded in memory |
+| `POST` | `/models/activate` | Load one model and unload all others in Ollama |
+| `POST` | `/chat` | Send message (`session_id`, `prompt`, optional `model`) |
 | `GET` | `/history` | All Q&A pairs |
 | `GET` | `/memory/{session_id}` | Session messages |
 | `GET` | `/sessions` | All sessions |

@@ -10,7 +10,11 @@ export const store = {
   isLoading: false,
   loadingStartedAt: null,
   isSidebarOpen: false,
-  modelName: "phi3:mini",
+  models: [],
+  selectedModel: "phi3:mini",
+  activeModel: null,
+  defaultModel: "phi3:mini",
+  isActivatingModel: false,
   apiOnline: null,
 };
 

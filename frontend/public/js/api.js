@@ -53,13 +53,23 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request("/"),
   models: () => request("/models"),
+  activateModel: (model, signal) =>
+    request("/models/activate", {
+      method: "POST",
+      body: JSON.stringify({ model }),
+      signal,
+    }),
   sessions: () => request("/sessions"),
   memory: (sessionId) => request(`/memory/${encodeURIComponent(sessionId)}`),
   history: () => request("/history"),
-  chat: (sessionId, prompt, signal) =>
+  chat: (sessionId, prompt, model, signal) =>
     request("/chat", {
       method: "POST",
-      body: JSON.stringify({ session_id: sessionId, prompt }),
+      body: JSON.stringify({
+        session_id: sessionId,
+        prompt,
+        model,
+      }),
       signal,
     }),
   deleteSession: (sessionId) =>
