@@ -316,10 +316,14 @@ async function sendMessage(prompt) {
       store.selectedModel,
       chatAbortController.signal
     );
-    const sourceLabel =
+    let sourceLabel =
       response.source === "redis"
         ? `Cached · ${response.model ?? store.selectedModel}`
         : `via ${response.model ?? store.selectedModel}`;
+
+    if (response.truncated) {
+      sourceLabel += " · Hit token limit — ask to continue";
+    }
 
     const assistantMessage = {
       role: "assistant",

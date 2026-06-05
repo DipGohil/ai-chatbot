@@ -17,7 +17,7 @@ OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "600"))
 MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "600"))
 MAX_HISTORY_CHARS = int(os.getenv("MAX_HISTORY_CHARS", "3000"))
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", "6"))
-MAX_NUM_PREDICT = int(os.getenv("MAX_NUM_PREDICT", "256"))
+MAX_NUM_PREDICT = int(os.getenv("MAX_NUM_PREDICT", "2048"))
 OLLAMA_BASE_URL = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}"
 OLLAMA_KEEP_ALIVE_ACTIVE = os.getenv("OLLAMA_KEEP_ALIVE_ACTIVE", "-1")
 
@@ -355,10 +355,14 @@ def chat(data: ChatRequest):
 
         db.commit()
 
+        done_reason = result.get("done_reason", "")
+        truncated = done_reason == "length"
+
         return {
             "source": "ollama",
             "model": result.get("model", model),
             "answer": answer,
+            "truncated": truncated,
         }
     except HTTPException:
         raise
