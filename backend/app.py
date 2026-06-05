@@ -31,6 +31,33 @@ def parse_keep_alive(value: str):
         return int(value)
     return value
 
+
+def is_cloud_model(model_name: str) -> bool:
+    return model_name.endswith(":cloud")
+
+
+def raise_for_ollama_error(
+    exc: requests.RequestException,
+    model: str,
+) -> HTTPException:
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        status = exc.response.status_code
+        if status == 401:
+            return HTTPException(
+                status_code=401,
+                detail=(
+                    f"Ollama cloud model '{model}' requires authentication. "
+                    "Add OLLAMA_API_KEY to your .env file "
+                    "(https://ollama.com/settings/keys), then run "
+                    "'docker compose up -d'. "
+                    "Or sign in: docker compose exec -it ollama ollama signin"
+                ),
+            )
+    return HTTPException(
+        status_code=502,
+        detail=f"Ollama request failed for '{model}': {exc}",
+    )
+
 app = FastAPI(title="AI Chatbot Platform")
 
 app.add_middleware(
@@ -85,18 +112,24 @@ def unload_model(model_name: str) -> None:
 
 
 def warmup_model(model_name: str) -> None:
-    response = requests.post(
-        f"{OLLAMA_BASE_URL}/api/generate",
-        json={
-            "model": model_name,
-            "prompt": "hi",
-            "stream": False,
-            "keep_alive": parse_keep_alive(OLLAMA_KEEP_ALIVE_ACTIVE),
-            "options": {"num_predict": 1},
-        },
-        timeout=OLLAMA_TIMEOUT,
-    )
-    response.raise_for_status()
+    payload = {
+        "model": model_name,
+        "stream": False,
+        "options": {"num_predict": 1},
+    }
+    if is_cloud_model(model_name):
+        payload["messages"] = [{"role": "user", "content": "hi"}]
+        url = f"{OLLAMA_BASE_URL}/api/chat"
+    else:
+        payload["prompt"] = "hi"
+        payload["keep_alive"] = parse_keep_alive(OLLAMA_KEEP_ALIVE_ACTIVE)
+        url = f"{OLLAMA_BASE_URL}/api/generate"
+
+    response = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT)
+    try:
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise raise_for_ollama_error(exc, model_name) from exc
 
 
 def activate_ollama_model(model_name: str) -> dict:
@@ -108,11 +141,39 @@ def activate_ollama_model(model_name: str) -> dict:
         )
 
     running = get_running_models()
+
+    if is_cloud_model(model_name):
+        unloaded = []
+        for loaded in running:
+            try:
+                unload_model(loaded)
+                unloaded.append(loaded)
+            except requests.RequestException as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to unload local model '{loaded}': {exc}",
+                ) from exc
+
+        try:
+            warmup_model(model_name)
+        except HTTPException:
+            raise
+        except requests.RequestException as exc:
+            raise raise_for_ollama_error(exc, model_name) from exc
+
+        return {
+            "active": model_name,
+            "unloaded": unloaded,
+            "running": [],
+            "cloud": True,
+        }
+
     if model_name in running and len(running) == 1:
         return {
             "active": model_name,
             "unloaded": [],
             "running": running,
+            "cloud": False,
         }
 
     unloaded = []
@@ -130,22 +191,27 @@ def activate_ollama_model(model_name: str) -> dict:
     if model_name not in get_running_models():
         try:
             warmup_model(model_name)
+        except HTTPException:
+            raise
         except requests.RequestException as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to load '{model_name}': {exc}",
-            ) from exc
+            raise raise_for_ollama_error(exc, model_name) from exc
 
     running = get_running_models()
     return {
         "active": model_name,
         "unloaded": unloaded,
         "running": running,
+        "cloud": False,
     }
 
 
 def ensure_model_ready(model_name: str) -> None:
     """Keep only the requested model loaded before inference."""
+    if is_cloud_model(model_name):
+        for loaded in get_running_models():
+            unload_model(loaded)
+        return
+
     running = get_running_models()
     if model_name in running:
         for other in running:
@@ -168,6 +234,7 @@ def fetch_ollama_models() -> list[dict]:
             "name": item["name"],
             "size": item.get("size"),
             "modified_at": item.get("modified_at"),
+            "cloud": is_cloud_model(item["name"]),
         }
         for item in data.get("models", [])
     ]
@@ -206,7 +273,10 @@ def call_ollama_chat(model: str, messages: list[dict]) -> dict:
         },
         timeout=OLLAMA_TIMEOUT,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise raise_for_ollama_error(exc, model) from exc
     return response.json()
 
 @app.get("/")
@@ -314,12 +384,12 @@ def chat(data: ChatRequest):
                     "Try a shorter message or start a new chat."
                 ),
             ) from exc
+        except HTTPException:
+            db.rollback()
+            raise
         except requests.RequestException as exc:
             db.rollback()
-            raise HTTPException(
-                status_code=502,
-                detail=f"Ollama request failed: {exc}",
-            ) from exc
+            raise raise_for_ollama_error(exc, model) from exc
 
         answer = (
             result.get("message", {}).get("content", "")

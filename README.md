@@ -55,6 +55,30 @@ A Dockerized multi-container AI chatbot with a ChatGPT-style web UI, FastAPI bac
 
    Refresh the model list in the sidebar — new models appear automatically.
 
+## Ollama Cloud models (`:cloud`)
+
+Cloud models (e.g. `qwen3-coder-next:cloud`) run on Ollama's servers and **require authentication**. Pulling the model into Docker is not enough.
+
+**Option A — API key (recommended for Docker):**
+
+1. Create a key at [ollama.com/settings/keys](https://ollama.com/settings/keys)
+2. Add to `.env`:
+   ```env
+   OLLAMA_API_KEY=your_key_here
+   ```
+3. Restart:
+   ```bash
+   docker compose up -d
+   ```
+
+**Option B — Sign in (interactive):**
+
+```bash
+docker compose exec -it ollama ollama signin
+```
+
+Credentials are stored in the `ollama_data` volume and persist across restarts.
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -69,6 +93,7 @@ A Dockerized multi-container AI chatbot with a ChatGPT-style web UI, FastAPI bac
 | `OLLAMA_HOST` | Ollama host | `ollama` |
 | `OLLAMA_PORT` | Ollama port | `11434` |
 | `OLLAMA_MODEL` | Default model | `phi3:mini` |
+| `OLLAMA_API_KEY` | API key for Ollama cloud models | *(required for `:cloud` models)* |
 
 > Never commit `.env` to Git. Use `.env.example` as a template.
 

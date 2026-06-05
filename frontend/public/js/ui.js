@@ -126,10 +126,11 @@ export function renderModelDropdown() {
       const option = document.createElement("option");
       option.value = model.name;
       const sizeGb =
-        model.size && !Number.isNaN(model.size)
+        model.size && !Number.isNaN(model.size) && model.size > 0
           ? ` (${(model.size / 1e9).toFixed(1)} GB)`
           : "";
-      option.textContent = `${model.name}${sizeGb}`;
+      const cloudTag = model.cloud ? " ☁" : "";
+      option.textContent = `${model.name}${sizeGb}${cloudTag}`;
       select.appendChild(option);
     });
   }

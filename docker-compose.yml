@@ -44,6 +44,7 @@ services:
     environment:
       OLLAMA_MAX_LOADED_MODELS: "1"
       OLLAMA_KEEP_ALIVE: "5m"
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
 
     volumes:
       - ollama_data:/root/.ollama
