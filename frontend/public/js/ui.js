@@ -12,8 +12,6 @@ const els = {
   modelActivateLabel: () => $("model-activate-label"),
   messageList: () => $("message-list"),
   welcome: () => $("welcome"),
-  loading: () => $("loading-indicator"),
-  loadingStatus: () => $("loading-status"),
   chatTitle: () => $("chat-title"),
   promptInput: () => $("prompt-input"),
   sendBtn: () => $("send-btn"),
@@ -32,7 +30,6 @@ let lastMessagesKey = "";
 let lastMessagesSessionId = null;
 let lastHeaderKey = "";
 let lastStatusKey = "";
-let lastLoadingVisible = null;
 
 function modelsListKey() {
   return store.models.map((m) => `${m.name}:${m.size ?? ""}`).join("|");
@@ -44,7 +41,7 @@ function sessionsListKey() {
 
 function messagesKey() {
   return store.messages
-    .map((m) => `${m.role}\u0001${m.message}\u0001${m.meta ?? ""}`)
+    .map((m) => `${m.role}\u0001${m.message}\u0001${m.meta ?? ""}\u0001${m.streaming ?? ""}`)
     .join("\u0002");
 }
 
@@ -209,8 +206,74 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function formatMessage(text) {
-  return escapeHtml(text).replace(/\n/g, "<br>");
+function formatInlineMarkdown(text) {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+}
+
+function flushList(items, ordered) {
+  if (items.length === 0) return "";
+  const tag = ordered ? "ol" : "ul";
+  const renderedItems = items
+    .map((item) => `<li>${formatInlineMarkdown(item)}</li>`)
+    .join("");
+  items.length = 0;
+  return `<${tag}>${renderedItems}</${tag}>`;
+}
+
+function formatMarkdown(text) {
+  const lines = text.split("\n");
+  const blocks = [];
+  const unordered = [];
+  const ordered = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const number = line.match(/^\s*\d+[.)]\s+(.+)$/);
+
+    if (heading) {
+      blocks.push(flushList(unordered, false), flushList(ordered, true));
+      blocks.push(
+        `<h${heading[1].length} class="message__heading">${formatInlineMarkdown(
+          heading[2]
+        )}</h${heading[1].length}>`
+      );
+      continue;
+    }
+
+    if (bullet) {
+      blocks.push(flushList(ordered, true));
+      unordered.push(bullet[1]);
+      continue;
+    }
+
+    if (number) {
+      blocks.push(flushList(unordered, false));
+      ordered.push(number[1]);
+      continue;
+    }
+
+    blocks.push(flushList(unordered, false), flushList(ordered, true));
+    if (line.trim()) {
+      blocks.push(`<p>${formatInlineMarkdown(line)}</p>`);
+    } else {
+      blocks.push("");
+    }
+  }
+
+  blocks.push(flushList(unordered, false), flushList(ordered, true));
+  return blocks.filter((block) => block !== "").join("");
+}
+
+function formatMessage(msg) {
+  if (msg.role === "assistant") {
+    return formatMarkdown(msg.message || "");
+  }
+  return formatInlineMarkdown(msg.message || "").replace(/\n/g, "<br>");
 }
 
 function createMessageElement(msg, animate = false) {
@@ -228,7 +291,14 @@ function createMessageElement(msg, animate = false) {
 
   const body = document.createElement("div");
   body.className = "message__body";
-  body.innerHTML = formatMessage(msg.message);
+  body.classList.toggle("message__body--streaming", Boolean(msg.streaming));
+  body.innerHTML = formatMessage(msg);
+
+  if (msg.streaming) {
+    const cursor = document.createElement("span");
+    cursor.className = "message__cursor";
+    body.appendChild(cursor);
+  }
 
   if (msg.meta) {
     const meta = document.createElement("span");
@@ -237,8 +307,47 @@ function createMessageElement(msg, animate = false) {
     body.appendChild(meta);
   }
 
+  if (msg.streaming) {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "message__cancel";
+    cancel.dataset.cancelChat = "true";
+    cancel.textContent = "Cancel";
+    body.appendChild(cancel);
+  }
+
   li.append(avatar, body);
   return li;
+}
+
+function updateMessageElement(li, msg) {
+  const body = li.querySelector(".message__body");
+  if (!body) return;
+
+  body.classList.toggle("message__body--streaming", Boolean(msg.streaming));
+  body.innerHTML = formatMessage(msg);
+
+  if (msg.streaming) {
+    const cursor = document.createElement("span");
+    cursor.className = "message__cursor";
+    body.appendChild(cursor);
+  }
+
+  if (msg.meta) {
+    const meta = document.createElement("span");
+    meta.className = "message__meta";
+    meta.textContent = msg.meta;
+    body.appendChild(meta);
+  }
+
+  if (msg.streaming) {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "message__cancel";
+    cancel.dataset.cancelChat = "true";
+    cancel.textContent = "Cancel";
+    body.appendChild(cancel);
+  }
 }
 
 function syncWelcomeAndListVisibility() {
@@ -265,7 +374,6 @@ function rebuildMessages(animateLast = false) {
   lastMessagesKey = messagesKey();
   lastMessagesSessionId = store.activeSessionId;
   syncWelcomeAndListVisibility();
-  updateLoadingStatus();
 }
 
 function appendMessages(fromIndex, animate = true) {
@@ -278,7 +386,6 @@ function appendMessages(fromIndex, animate = true) {
 
   lastMessagesKey = messagesKey();
   syncWelcomeAndListVisibility();
-  updateLoadingStatus();
 }
 
 export function renderMessages() {
@@ -290,6 +397,15 @@ export function renderMessages() {
   const previousCount = list.children.length;
 
   if (sessionChanged || key !== lastMessagesKey) {
+    if (!sessionChanged && previousCount === store.messages.length) {
+      store.messages.forEach((msg, index) => {
+        updateMessageElement(list.children[index], msg);
+      });
+      lastMessagesKey = key;
+      syncWelcomeAndListVisibility();
+      return;
+    }
+
     if (
       !sessionChanged &&
       key.startsWith(lastMessagesKey) &&
@@ -305,7 +421,6 @@ export function renderMessages() {
   }
 
   syncWelcomeAndListVisibility();
-  updateLoadingStatus();
 }
 
 export function renderHeader() {
@@ -340,38 +455,6 @@ export function updateComposer() {
     !store.selectedModel;
   if (sendBtn.disabled !== shouldDisable) {
     sendBtn.disabled = shouldDisable;
-  }
-}
-
-export function updateLoadingStatus() {
-  const loading = els.loading();
-  const status = els.loadingStatus();
-  if (!loading || !status) return;
-
-  const visible = store.isLoading;
-  if (lastLoadingVisible !== visible) {
-    loading.classList.toggle("hidden", !visible);
-    lastLoadingVisible = visible;
-  }
-
-  if (!visible) {
-    if (status.textContent !== "Thinking… local models can take 30–90 seconds") {
-      status.textContent = "Thinking… local models can take 30–90 seconds";
-    }
-    return;
-  }
-
-  const modelLabel = store.selectedModel ?? "model";
-  let nextText = `Generating with ${modelLabel}…`;
-  if (store.loadingStartedAt) {
-    const seconds = Math.floor((Date.now() - store.loadingStartedAt) / 1000);
-    if (seconds >= 10) {
-      nextText = `Still generating (${seconds}s) — ${modelLabel} on CPU can be slow`;
-    }
-  }
-
-  if (status.textContent !== nextText) {
-    status.textContent = nextText;
   }
 }
 
@@ -433,7 +516,6 @@ export function renderChanged() {
   }
 
   updateComposer();
-  updateLoadingStatus();
 
   const statusKey = `${store.apiOnline}|${store.models.length}|${store.activeModel ?? ""}`;
   if (statusKey !== lastStatusKey) {
@@ -451,7 +533,6 @@ export function render() {
   lastMessagesSessionId = null;
   lastHeaderKey = "";
   lastStatusKey = "";
-  lastLoadingVisible = null;
 
   renderModelDropdown();
   renderSessions();

@@ -1,9 +1,11 @@
 import os
 import threading
+import json
 
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cache import redis_client
@@ -261,16 +263,7 @@ def build_chat_messages(conversation_messages, prompt: str) -> list[dict]:
 def call_ollama_chat(model: str, messages: list[dict]) -> dict:
     response = requests.post(
         f"{OLLAMA_BASE_URL}/api/chat",
-        json={
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "keep_alive": parse_keep_alive(OLLAMA_KEEP_ALIVE_ACTIVE),
-            "options": {
-                "num_predict": MAX_NUM_PREDICT,
-                "temperature": 0.7,
-            },
-        },
+        json=ollama_chat_payload(model, messages, stream=False),
         timeout=OLLAMA_TIMEOUT,
     )
     try:
@@ -278,6 +271,62 @@ def call_ollama_chat(model: str, messages: list[dict]) -> dict:
     except requests.RequestException as exc:
         raise raise_for_ollama_error(exc, model) from exc
     return response.json()
+
+
+def ollama_chat_payload(model: str, messages: list[dict], stream: bool) -> dict:
+    options = {
+        "num_predict": MAX_NUM_PREDICT,
+        "temperature": 0.7,
+        "num_ctx": 2048,
+    }
+    if not is_cloud_model(model):
+        options.update(
+            {
+                "num_thread": int(os.getenv("OLLAMA_NUM_THREAD", "0")) or None,
+                "num_gpu": int(os.getenv("OLLAMA_NUM_GPU", "999")),
+            }
+        )
+        options = {key: value for key, value in options.items() if value is not None}
+
+    return {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "keep_alive": parse_keep_alive(OLLAMA_KEEP_ALIVE_ACTIVE),
+        "options": options,
+    }
+
+
+def stream_event(event: str, **payload) -> str:
+    return json.dumps({"event": event, **payload}) + "\n"
+
+
+def stream_ollama_chat(model: str, messages: list[dict]):
+    response = requests.post(
+        f"{OLLAMA_BASE_URL}/api/chat",
+        json=ollama_chat_payload(model, messages, stream=True),
+        stream=True,
+        timeout=OLLAMA_TIMEOUT,
+    )
+    try:
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        response.close()
+        raise raise_for_ollama_error(exc, model) from exc
+
+    try:
+        for line in response.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            chunk = json.loads(line)
+            token = chunk.get("message", {}).get("content", "")
+            if token:
+                yield token, chunk
+            if chunk.get("done"):
+                yield "", chunk
+                break
+    finally:
+        response.close()
 
 @app.get("/")
 def home():
@@ -444,6 +493,117 @@ def chat(data: ChatRequest):
         ) from exc
     finally:
         db.close()
+
+
+@app.post("/chat/stream")
+def chat_stream(data: ChatRequest):
+    model = resolve_model(data.model)
+    cache_key = f"{data.session_id}:{model}:{data.prompt}"
+    cached_answer = redis_client.get(cache_key)
+
+    if cached_answer:
+        def cached_generator():
+            yield stream_event("meta", source="redis", model=model)
+            for word in cached_answer.split(" "):
+                yield stream_event("token", token=f"{word} ")
+            yield stream_event("done", model=model, truncated=False)
+
+        return StreamingResponse(
+            cached_generator(),
+            media_type="application/x-ndjson",
+        )
+
+    def generate():
+        db = SessionLocal()
+        answer_parts = []
+        final_chunk = {}
+
+        try:
+            existing_session = (
+                db.query(Session)
+                .filter(Session.session_id == data.session_id)
+                .first()
+            )
+
+            if not existing_session:
+                db.add(
+                    Session(
+                        session_id=data.session_id,
+                        title=data.prompt[:50],
+                    )
+                )
+
+            history_rows = (
+                db.query(Conversation)
+                .filter(Conversation.session_id == data.session_id)
+                .order_by(Conversation.id.desc())
+                .limit(MAX_CONTEXT_MESSAGES)
+                .all()
+            )
+            history_rows.reverse()
+            ollama_messages = build_chat_messages(history_rows, data.prompt)
+
+            db.add(
+                Conversation(
+                    session_id=data.session_id,
+                    role="user",
+                    message=data.prompt,
+                )
+            )
+            db.flush()
+
+            yield stream_event("meta", source="ollama", model=model)
+
+            ollama_lock.acquire()
+            try:
+                ensure_model_ready(model)
+                for token, chunk in stream_ollama_chat(model, ollama_messages):
+                    final_chunk = chunk or final_chunk
+                    if token:
+                        answer_parts.append(token)
+                        yield stream_event("token", token=token)
+            finally:
+                ollama_lock.release()
+
+            answer = "".join(answer_parts).strip()
+            if not answer:
+                db.rollback()
+                yield stream_event("error", detail="Ollama returned an empty response.")
+                return
+
+            db.add(
+                Conversation(
+                    session_id=data.session_id,
+                    role="assistant",
+                    message=answer,
+                )
+            )
+            db.add(ChatHistory(question=data.prompt, answer=answer))
+            redis_client.set(cache_key, answer, ex=3600)
+            db.commit()
+
+            done_reason = final_chunk.get("done_reason", "")
+            yield stream_event(
+                "done",
+                model=final_chunk.get("model", model),
+                truncated=done_reason == "length",
+            )
+        except requests.Timeout:
+            db.rollback()
+            yield stream_event(
+                "error",
+                detail="Ollama took too long to respond. Try a shorter message.",
+            )
+        except HTTPException as exc:
+            db.rollback()
+            yield stream_event("error", detail=exc.detail, status=exc.status_code)
+        except Exception as exc:
+            db.rollback()
+            yield stream_event("error", detail=f"Chat failed: {exc}")
+        finally:
+            db.close()
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 @app.get("/history")
 def history():

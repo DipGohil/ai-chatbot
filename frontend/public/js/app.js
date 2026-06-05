@@ -17,7 +17,6 @@ import {
   setSidebarOpen,
   showToast,
   updateComposer,
-  updateLoadingStatus,
 } from "./ui.js";
 
 function persistActiveSession() {
@@ -249,25 +248,86 @@ async function deleteSession(sessionId) {
 }
 
 let chatAbortController = null;
-let loadingTimer = null;
-
-function clearLoadingTimer() {
-  if (loadingTimer) {
-    clearInterval(loadingTimer);
-    loadingTimer = null;
-  }
-}
-
-function startLoadingTimer() {
-  clearLoadingTimer();
-  loadingTimer = setInterval(() => updateLoadingStatus(), 1000);
-}
 
 function cancelChatRequest() {
   chatAbortController?.abort();
-  clearLoadingTimer();
   patchState({ isLoading: false, loadingStartedAt: null });
   showToast("Request cancelled");
+}
+
+function updateMessageAt(index, updates) {
+  const messages = store.messages.map((message, currentIndex) =>
+    currentIndex === index ? { ...message, ...updates } : message
+  );
+  patchState({ messages });
+}
+
+function createTokenAnimator(messageIndex) {
+  let queued = "";
+  let visible = "";
+  let frame = null;
+  let resolveIdle;
+  let idlePromise = Promise.resolve();
+
+  const finishIdle = () => {
+    if (resolveIdle && queued.length === 0) {
+      resolveIdle();
+      resolveIdle = null;
+    }
+  };
+
+  const paint = () => {
+    if (queued.length === 0) {
+      frame = null;
+      finishIdle();
+      return;
+    }
+
+    const step = Math.min(Math.max(Math.ceil(queued.length / 6), 1), 8);
+    visible += queued.slice(0, step);
+    queued = queued.slice(step);
+    updateMessageAt(messageIndex, { message: visible });
+    scrollToBottom();
+    frame = requestAnimationFrame(paint);
+  };
+
+  return {
+    push(token) {
+      if (!token) return;
+      queued += token;
+      if (!resolveIdle) {
+        idlePromise = new Promise((resolve) => {
+          resolveIdle = resolve;
+        });
+      }
+      if (!frame) {
+        frame = requestAnimationFrame(paint);
+      }
+    },
+    async flush() {
+      await idlePromise;
+      return visible;
+    },
+    stop() {
+      if (frame) cancelAnimationFrame(frame);
+      frame = null;
+      queued = "";
+      finishIdle();
+    },
+  };
+}
+
+function generatingMeta(model, startedAt, source = "ollama") {
+  const prefix = source === "redis" ? "Cached" : "Generating";
+  const modelLabel = model ?? store.selectedModel ?? "model";
+  if (!startedAt || source === "redis") {
+    return `${prefix} · ${modelLabel}`;
+  }
+
+  const seconds = Math.floor((Date.now() - startedAt) / 1000);
+  return seconds >= 3
+    ? `${prefix} · ${modelLabel} · ${seconds}s`
+    : `${prefix} · ${modelLabel}`;
 }
 
 async function sendMessage(prompt) {
@@ -298,42 +358,77 @@ async function sendMessage(prompt) {
   }
 
   const userMessage = { role: "user", message: trimmed };
+  const assistantMessage = {
+    role: "assistant",
+    message: "",
+    meta: `Connecting · ${store.selectedModel}`,
+    streaming: true,
+  };
   chatAbortController = new AbortController();
   const timeoutId = setTimeout(() => chatAbortController?.abort(), CHAT_TIMEOUT_MS);
 
+  const nextMessages = [...store.messages, userMessage, assistantMessage];
+  const assistantIndex = nextMessages.length - 1;
+  const animator = createTokenAnimator(assistantIndex);
+  let streamMeta = {
+    source: "ollama",
+    model: store.selectedModel,
+    truncated: false,
+  };
+  const startedAt = Date.now();
+  let metaTimer = null;
+
   patchState({
-    messages: [...store.messages, userMessage],
+    messages: nextMessages,
     isLoading: true,
     loadingStartedAt: Date.now(),
   });
-  startLoadingTimer();
+  metaTimer = setInterval(() => {
+    updateMessageAt(assistantIndex, {
+      meta: generatingMeta(streamMeta.model, startedAt, streamMeta.source),
+    });
+  }, 1000);
   scrollToBottom();
 
   try {
-    const response = await api.chat(
+    await api.chatStream(
       sessionId,
       trimmed,
       store.selectedModel,
-      chatAbortController.signal
+      chatAbortController.signal,
+      {
+        meta(event) {
+          streamMeta = { ...streamMeta, ...event };
+          updateMessageAt(assistantIndex, {
+            meta: generatingMeta(
+              event.model ?? store.selectedModel,
+              startedAt,
+              event.source
+            ),
+          });
+        },
+        token(event) {
+          animator.push(event.token);
+        },
+        done(event) {
+          streamMeta = { ...streamMeta, ...event };
+        },
+      }
     );
+    const finalAnswer = await animator.flush();
     let sourceLabel =
-      response.source === "redis"
-        ? `Cached · ${response.model ?? store.selectedModel}`
-        : `via ${response.model ?? store.selectedModel}`;
+      streamMeta.source === "redis"
+        ? `Cached · ${streamMeta.model ?? store.selectedModel}`
+        : `via ${streamMeta.model ?? store.selectedModel}`;
 
-    if (response.truncated) {
+    if (streamMeta.truncated) {
       sourceLabel += " · Hit token limit — ask to continue";
     }
 
-    const assistantMessage = {
-      role: "assistant",
-      message: response.answer,
+    updateMessageAt(assistantIndex, {
+      message: finalAnswer,
       meta: sourceLabel,
-    };
-
-    const updatedMessages = [...store.messages, assistantMessage];
-    patchState({
-      messages: updatedMessages,
+      streaming: false,
     });
 
     await refreshSessions();
@@ -353,9 +448,20 @@ async function sendMessage(prompt) {
 
     scrollToBottom();
   } catch (err) {
+    animator.stop();
     if (err.name === "AbortError") {
+      updateMessageAt(assistantIndex, {
+        message: "Response interrupted.",
+        meta: `via ${store.selectedModel}`,
+        streaming: false,
+      });
       showToast("Request cancelled or timed out. Try again.", true);
     } else {
+      updateMessageAt(assistantIndex, {
+        message: "Response failed.",
+        meta: `via ${store.selectedModel}`,
+        streaming: false,
+      });
       showToast(
         err instanceof ApiError
           ? err.message
@@ -366,7 +472,7 @@ async function sendMessage(prompt) {
     scrollToBottom();
   } finally {
     clearTimeout(timeoutId);
-    clearLoadingTimer();
+    if (metaTimer) clearInterval(metaTimer);
     chatAbortController = null;
     patchState({ isLoading: false, loadingStartedAt: null });
   }
@@ -404,6 +510,12 @@ function bindEvents() {
     const selectBtn = e.target.closest(".session-item__btn");
     if (selectBtn?.dataset.sessionId) {
       selectSession(selectBtn.dataset.sessionId);
+    }
+  });
+
+  $("message-list")?.addEventListener("click", (e) => {
+    if (e.target.closest("[data-cancel-chat]")) {
+      cancelChatRequest();
     }
   });
 
