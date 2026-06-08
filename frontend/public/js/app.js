@@ -14,6 +14,8 @@ import {
   render,
   renderChanged,
   scrollToBottom,
+  closeSidebarOnMobile,
+  getDefaultSidebarOpen,
   setSidebarOpen,
   showToast,
   updateComposer,
@@ -204,20 +206,20 @@ function startNewChat() {
     isLoading: false,
   });
   persistActiveSession();
-  setSidebarOpen(false);
+  closeSidebarOnMobile();
   els.promptInput()?.focus();
 }
 
 async function selectSession(sessionId) {
   if (sessionId === store.activeSessionId && store.messages.length > 0) {
-    setSidebarOpen(false);
+    closeSidebarOnMobile();
     return;
   }
 
   patchState({ activeSessionId: sessionId, messages: [], isLoading: false });
   persistActiveSession();
   await loadSessionMemory(sessionId);
-  setSidebarOpen(false);
+  closeSidebarOnMobile();
 }
 
 async function deleteSession(sessionId) {
@@ -492,12 +494,24 @@ function bindEvents() {
   });
 
   $("sidebar-toggle")?.addEventListener("click", () =>
-    setSidebarOpen(true)
+    setSidebarOpen(!store.isSidebarOpen)
   );
   $("sidebar-close")?.addEventListener("click", () => setSidebarOpen(false));
   $("sidebar-overlay")?.addEventListener("click", () =>
     setSidebarOpen(false)
   );
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && store.isSidebarOpen) {
+      setSidebarOpen(false);
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (store.isSidebarOpen) {
+      setSidebarOpen(true);
+    }
+  });
 
   $("session-list")?.addEventListener("click", (e) => {
     const deleteBtn = e.target.closest(".session-item__delete");
@@ -562,6 +576,7 @@ async function init() {
     return;
   }
 
+  setSidebarOpen(getDefaultSidebarOpen());
   render();
 
   await Promise.all([checkHealth(), loadModels(), refreshSessions()]);

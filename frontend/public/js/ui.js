@@ -1,4 +1,4 @@
-import { store } from "./store.js";
+import { patchState, store } from "./store.js";
 
 export const $ = (id) => document.getElementById(id);
 
@@ -61,10 +61,45 @@ export function showToast(message, isError = false) {
   showToast._timer = setTimeout(() => toast.classList.add("hidden"), 4000);
 }
 
+const SIDEBAR_DESKTOP_QUERY = "(min-width: 769px)";
+
+export function isDesktopViewport() {
+  return window.matchMedia(SIDEBAR_DESKTOP_QUERY).matches;
+}
+
+export function getDefaultSidebarOpen() {
+  return isDesktopViewport();
+}
+
 export function setSidebarOpen(open) {
-  els.sidebar()?.classList.toggle("sidebar--open", open);
-  els.overlay()?.classList.toggle("sidebar-overlay--visible", open);
-  els.overlay()?.setAttribute("aria-hidden", String(!open));
+  patchState({ isSidebarOpen: open });
+
+  const sidebar = els.sidebar();
+  const overlay = els.overlay();
+  const app = $("app");
+  const toggle = $("sidebar-toggle");
+
+  sidebar?.classList.toggle("sidebar--open", open);
+  sidebar?.setAttribute("aria-hidden", String(!open));
+  app?.classList.toggle("app--sidebar-open", open);
+
+  const showOverlay = open && !isDesktopViewport();
+  overlay?.classList.toggle("sidebar-overlay--visible", showOverlay);
+  overlay?.setAttribute("aria-hidden", String(!showOverlay));
+
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute(
+      "aria-label",
+      open ? "Close sidebar" : "Open sidebar"
+    );
+  }
+}
+
+export function closeSidebarOnMobile() {
+  if (!isDesktopViewport()) {
+    setSidebarOpen(false);
+  }
 }
 
 function updateSessionActiveState() {

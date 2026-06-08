@@ -75,6 +75,10 @@ button {
 }
 
 .sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
   background: var(--bg-sidebar);
@@ -82,6 +86,8 @@ button {
   display: flex;
   flex-direction: column;
   z-index: 30;
+  transform: translateX(-100%);
+  box-shadow: var(--shadow);
   transition: transform var(--transition);
 }
 
@@ -113,7 +119,7 @@ button {
 }
 
 .sidebar__close {
-  display: none;
+  display: inline-flex;
 }
 
 .btn {
@@ -378,8 +384,22 @@ button {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  margin-left: 0;
   background: var(--bg-main);
   position: relative;
+  transition: margin-left var(--transition);
+}
+
+.app--sidebar-open .main {
+  margin-left: var(--sidebar-width);
+}
+
+.sidebar--open {
+  transform: translateX(0);
+}
+
+.sidebar-overlay--visible {
+  display: block;
 }
 
 .main::before {
@@ -405,7 +425,8 @@ button {
 }
 
 .main__menu {
-  display: none;
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
 .main__title {
@@ -836,31 +857,6 @@ button {
 
 /* Mobile */
 @media (max-width: 768px) {
-  .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    transform: translateX(-100%);
-    box-shadow: var(--shadow);
-  }
-
-  .sidebar--open {
-    transform: translateX(0);
-  }
-
-  .sidebar__close {
-    display: inline-flex;
-  }
-
-  .sidebar-overlay--visible {
-    display: block;
-  }
-
-  .main__menu {
-    display: inline-flex;
-  }
-
   .welcome__title {
     font-size: 1.5rem;
   }

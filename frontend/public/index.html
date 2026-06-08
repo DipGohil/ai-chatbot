@@ -12,7 +12,7 @@
   </head>
   <body>
     <div id="app" class="app">
-      <aside id="sidebar" class="sidebar" aria-label="Conversations">
+      <aside id="sidebar" class="sidebar" aria-label="Conversations" aria-hidden="true">
         <header class="sidebar__header">
           <div class="brand">
             <span class="brand__mark" aria-hidden="true"></span>
@@ -98,7 +98,9 @@
             id="sidebar-toggle"
             type="button"
             class="icon-btn main__menu"
-            aria-label="Open conversations"
+            aria-label="Open sidebar"
+            aria-expanded="false"
+            aria-controls="sidebar"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 6h18M3 12h18M3 18h18"/>
