@@ -1,6 +1,11 @@
 import { api, ApiError, CHAT_TIMEOUT_MS } from "./api.js";
 import { MODEL_STORAGE_KEY, STORAGE_KEY } from "./config.js";
 import {
+  bindSidebarResize,
+  initSidebarWidth,
+  SIDEBAR_TOGGLE_ICON,
+} from "./sidebar.js";
+import {
   createSessionId,
   getActiveSession,
   patchState,
@@ -220,6 +225,31 @@ async function selectSession(sessionId) {
   persistActiveSession();
   await loadSessionMemory(sessionId);
   closeSidebarOnMobile();
+}
+
+async function renameSession(sessionId) {
+  const session = store.sessions.find((s) => s.session_id === sessionId);
+  const current = session?.title || "Untitled chat";
+  const next = window.prompt("Rename conversation", current);
+  if (next === null) return;
+
+  const trimmed = next.trim();
+  if (!trimmed || trimmed === current) return;
+
+  try {
+    await api.renameSession(sessionId, trimmed);
+    patchState({
+      sessions: store.sessions.map((s) =>
+        s.session_id === sessionId ? { ...s, title: trimmed } : s
+      ),
+    });
+    showToast("Conversation renamed");
+  } catch (err) {
+    showToast(
+      err instanceof ApiError ? err.message : "Failed to rename conversation",
+      true
+    );
+  }
 }
 
 async function deleteSession(sessionId) {
@@ -493,13 +523,16 @@ function bindEvents() {
     activateModel(e.target.value);
   });
 
-  $("sidebar-toggle")?.addEventListener("click", () =>
-    setSidebarOpen(!store.isSidebarOpen)
-  );
-  $("sidebar-close")?.addEventListener("click", () => setSidebarOpen(false));
-  $("sidebar-overlay")?.addEventListener("click", () =>
-    setSidebarOpen(false)
-  );
+  const sidebarToggle = $("sidebar-toggle");
+  if (sidebarToggle) {
+    sidebarToggle.innerHTML = SIDEBAR_TOGGLE_ICON;
+    sidebarToggle.addEventListener("click", () =>
+      setSidebarOpen(!store.isSidebarOpen)
+    );
+  }
+
+  $("sidebar-overlay")?.addEventListener("click", () => setSidebarOpen(false));
+  bindSidebarResize();
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && store.isSidebarOpen) {
@@ -514,6 +547,13 @@ function bindEvents() {
   });
 
   $("session-list")?.addEventListener("click", (e) => {
+    const renameBtn = e.target.closest(".session-item__rename");
+    if (renameBtn?.dataset.sessionId) {
+      e.stopPropagation();
+      renameSession(renameBtn.dataset.sessionId);
+      return;
+    }
+
     const deleteBtn = e.target.closest(".session-item__delete");
     if (deleteBtn?.dataset.sessionId) {
       e.stopPropagation();
@@ -576,6 +616,7 @@ async function init() {
     return;
   }
 
+  initSidebarWidth();
   setSidebarOpen(getDefaultSidebarOpen());
   render();
 

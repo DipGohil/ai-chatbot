@@ -87,12 +87,12 @@ export function setSidebarOpen(open) {
   overlay?.classList.toggle("sidebar-overlay--visible", showOverlay);
   overlay?.setAttribute("aria-hidden", String(!showOverlay));
 
+  const resize = $("sidebar-resize");
+  resize?.classList.toggle("sidebar__resize--visible", open && isDesktopViewport());
+
   if (toggle) {
     toggle.setAttribute("aria-expanded", String(open));
-    toggle.setAttribute(
-      "aria-label",
-      open ? "Close sidebar" : "Open sidebar"
-    );
+    toggle.setAttribute("aria-label", open ? "Close sidebar" : "Open sidebar");
   }
 }
 
@@ -219,15 +219,29 @@ export function renderSessions() {
     selectBtn.dataset.sessionId = session.session_id;
     selectBtn.title = session.title || "Untitled chat";
 
+    const actions = document.createElement("div");
+    actions.className = "session-item__actions";
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "session-item__rename icon-btn";
+    renameBtn.dataset.sessionId = session.session_id;
+    renameBtn.setAttribute("aria-label", "Rename conversation");
+    renameBtn.title = "Rename";
+    renameBtn.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "session-item__delete icon-btn";
     deleteBtn.dataset.sessionId = session.session_id;
     deleteBtn.setAttribute("aria-label", "Delete conversation");
+    deleteBtn.title = "Delete";
     deleteBtn.innerHTML =
       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
 
-    li.append(selectBtn, deleteBtn);
+    actions.append(renameBtn, deleteBtn);
+    li.append(selectBtn, actions);
     list.appendChild(li);
   });
 

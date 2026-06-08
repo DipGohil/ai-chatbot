@@ -80,6 +80,10 @@ class ModelActivateRequest(BaseModel):
     model: str
 
 
+class SessionRenameRequest(BaseModel):
+    title: str
+
+
 def resolve_model(requested: str | None) -> str:
     if requested and requested.strip():
         return requested.strip()
@@ -655,6 +659,31 @@ def sessions():
         }
         for s in sessions
     ]
+
+@app.patch("/session/{session_id}")
+def rename_session(session_id: str, data: SessionRenameRequest):
+    title = data.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+
+    db = SessionLocal()
+
+    session = (
+        db.query(Session)
+        .filter(Session.session_id == session_id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session.title = title[:200]
+    db.commit()
+
+    return {
+        "session_id": session_id,
+        "title": session.title,
+    }
+
 
 @app.delete("/session/{session_id}")
 def delete_session(session_id: str):

@@ -95,7 +95,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1rem 0.75rem;
+  padding: 1rem 1rem 0.75rem 3.35rem;
 }
 
 .brand {
@@ -116,10 +116,6 @@ button {
   font-weight: 700;
   font-size: 1.1rem;
   letter-spacing: -0.02em;
-}
-
-.sidebar__close {
-  display: inline-flex;
 }
 
 .btn {
@@ -321,25 +317,70 @@ button {
   min-width: 0;
 }
 
-.session-item__delete {
+.session-item__actions {
+  display: flex;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  margin-right: 0.35rem;
-  border-radius: var(--radius-sm);
-  color: var(--text-faint);
+  gap: 0.1rem;
+  margin-right: 0.2rem;
   opacity: 0;
-  transition: opacity var(--transition), color var(--transition), background var(--transition);
+  transition: opacity var(--transition);
 }
 
-.session-item:hover .session-item__delete,
-.session-item--active .session-item__delete {
+.session-item:hover .session-item__actions,
+.session-item--active .session-item__actions {
   opacity: 1;
+}
+
+.session-item__rename,
+.session-item__delete {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  transition: color var(--transition), background var(--transition);
+}
+
+.session-item__rename:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
 }
 
 .session-item__delete:hover {
   color: var(--danger);
   background: var(--danger-bg);
+}
+
+.sidebar__resize {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar-width) - 3px);
+  width: 6px;
+  z-index: 31;
+  cursor: col-resize;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition), background var(--transition);
+}
+
+.sidebar__resize--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebar__resize:hover,
+body.sidebar-resizing .sidebar__resize {
+  background: rgba(61, 214, 198, 0.22);
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.sidebar-resizing .sidebar,
+body.sidebar-resizing .main {
+  transition: none !important;
 }
 
 .sidebar__footer {
@@ -419,14 +460,34 @@ button {
   align-items: center;
   gap: 0.75rem;
   height: var(--header-h);
-  padding: 0 1.25rem;
+  padding: 0 1.25rem 0 3.35rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-main);
 }
 
-.main__menu {
+.sidebar-toggle {
+  position: fixed;
+  top: calc((var(--header-h) - 36px) / 2);
+  left: 0.85rem;
+  z-index: 45;
   display: inline-flex;
-  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--text-muted);
+  transition: color var(--transition), background var(--transition);
+}
+
+.sidebar-toggle:hover {
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 2px solid rgba(61, 214, 198, 0.45);
+  outline-offset: 2px;
 }
 
 .main__title {
@@ -886,6 +947,12 @@ button {
 
 @media (min-width: 769px) {
   .sidebar-overlay {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar__resize {
     display: none !important;
   }
 }

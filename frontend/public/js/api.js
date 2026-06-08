@@ -157,6 +157,11 @@ export const api = {
     request(`/session/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     }),
+  renameSession: (sessionId, title) =>
+    request(`/session/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
 };
 
 export { ApiError };
