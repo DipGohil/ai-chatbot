@@ -606,8 +606,47 @@ button {
 
 .message__body p:last-child,
 .message__body ul:last-child,
-.message__body ol:last-child {
+.message__body ol:last-child,
+.message__body .message__table-wrap:last-child {
   margin-bottom: 0;
+}
+
+.message__table-wrap {
+  margin: 0.65rem 0 1rem;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.message__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.message__table th,
+.message__table td {
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  vertical-align: top;
+}
+
+.message__table th {
+  color: #ffffff;
+  font-weight: 700;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+}
+
+.message__table tr:last-child td {
+  border-bottom: none;
+}
+
+.message__table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .message__heading {
