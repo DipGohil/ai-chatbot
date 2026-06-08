@@ -1,3 +1,4 @@
+import { formatMarkdown } from "./markdown.js";
 import { patchState, store } from "./store.js";
 
 export const $ = (id) => document.getElementById(id);
@@ -249,175 +250,20 @@ export function renderSessions() {
   lastActiveSessionId = store.activeSessionId;
 }
 
-function escapeHtml(text) {
+function formatInlineText(text) {
   const div = document.createElement("div");
   div.textContent = text;
-  return div.innerHTML;
-}
-
-function formatInlineMarkdown(text) {
-  return escapeHtml(text)
+  return div.innerHTML
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
-}
-
-function flushList(items, ordered) {
-  if (items.length === 0) return "";
-  const tag = ordered ? "ol" : "ul";
-  const renderedItems = items
-    .map((item) => `<li>${formatInlineMarkdown(item)}</li>`)
-    .join("");
-  items.length = 0;
-  return `<${tag}>${renderedItems}</${tag}>`;
-}
-
-function parseTableCells(line) {
-  const trimmed = line.trim();
-  if (!trimmed.includes("|")) return null;
-
-  let cells = trimmed.split("|").map((cell) => cell.trim());
-  if (trimmed.startsWith("|")) cells = cells.slice(1);
-  if (trimmed.endsWith("|")) cells = cells.slice(0, -1);
-
-  return cells.length > 0 ? cells : null;
-}
-
-function isTableRow(line) {
-  return parseTableCells(line) !== null;
-}
-
-function isTableSeparator(line) {
-  const cells = parseTableCells(line);
-  if (!cells) return false;
-  return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function tableCellAlign(cell) {
-  if (/^:-+:$/.test(cell)) return "center";
-  if (/^-+:$/.test(cell)) return "right";
-  return "left";
-}
-
-function renderTable(tableLines) {
-  if (tableLines.length < 2) return null;
-
-  const headerCells = parseTableCells(tableLines[0]);
-  if (!headerCells) return null;
-
-  const hasSeparator = isTableSeparator(tableLines[1]);
-  const alignments = hasSeparator
-    ? parseTableCells(tableLines[1]).map(tableCellAlign)
-    : headerCells.map(() => "left");
-  const bodyLines = hasSeparator ? tableLines.slice(2) : tableLines.slice(1);
-
-  const alignAttr = (index) => {
-    const align = alignments[index] ?? "left";
-    return align === "left" ? "" : ` style="text-align:${align}"`;
-  };
-
-  const thead = `<thead><tr>${headerCells
-    .map(
-      (cell, index) =>
-        `<th${alignAttr(index)}>${formatInlineMarkdown(cell)}</th>`
-    )
-    .join("")}</tr></thead>`;
-
-  const bodyRows = bodyLines
-    .filter((line) => isTableRow(line) && !isTableSeparator(line))
-    .map((line) => parseTableCells(line))
-    .filter(Boolean);
-
-  const tbody =
-    bodyRows.length > 0
-      ? `<tbody>${bodyRows
-          .map(
-            (cells) =>
-              `<tr>${cells
-                .map(
-                  (cell, index) =>
-                    `<td${alignAttr(index)}>${formatInlineMarkdown(cell)}</td>`
-                )
-                .join("")}</tr>`
-          )
-          .join("")}</tbody>`
-      : "";
-
-  return `<div class="message__table-wrap"><table class="message__table">${thead}${tbody}</table></div>`;
-}
-
-function formatMarkdown(text) {
-  const lines = text.split("\n");
-  const blocks = [];
-  const unordered = [];
-  const ordered = [];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].trimEnd();
-
-    if (isTableRow(line)) {
-      const tableLines = [];
-      while (i < lines.length && isTableRow(lines[i].trimEnd())) {
-        tableLines.push(lines[i].trimEnd());
-        i += 1;
-      }
-      i -= 1;
-
-      blocks.push(flushList(unordered, false), flushList(ordered, true));
-      const tableHtml = renderTable(tableLines);
-      if (tableHtml) {
-        blocks.push(tableHtml);
-      } else {
-        for (const tableLine of tableLines) {
-          blocks.push(`<p>${formatInlineMarkdown(tableLine)}</p>`);
-        }
-      }
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,3})\s+(.+)$/);
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-    const number = line.match(/^\s*\d+[.)]\s+(.+)$/);
-
-    if (heading) {
-      blocks.push(flushList(unordered, false), flushList(ordered, true));
-      blocks.push(
-        `<h${heading[1].length} class="message__heading">${formatInlineMarkdown(
-          heading[2]
-        )}</h${heading[1].length}>`
-      );
-      continue;
-    }
-
-    if (bullet) {
-      blocks.push(flushList(ordered, true));
-      unordered.push(bullet[1]);
-      continue;
-    }
-
-    if (number) {
-      blocks.push(flushList(unordered, false));
-      ordered.push(number[1]);
-      continue;
-    }
-
-    blocks.push(flushList(unordered, false), flushList(ordered, true));
-    if (line.trim()) {
-      blocks.push(`<p>${formatInlineMarkdown(line)}</p>`);
-    } else {
-      blocks.push("");
-    }
-  }
-
-  blocks.push(flushList(unordered, false), flushList(ordered, true));
-  return blocks.filter((block) => block !== "").join("");
 }
 
 function formatMessage(msg) {
   if (msg.role === "assistant") {
     return formatMarkdown(msg.message || "");
   }
-  return formatInlineMarkdown(msg.message || "").replace(/\n/g, "<br>");
+  return formatInlineText(msg.message || "").replace(/\n/g, "<br>");
 }
 
 function createMessageElement(msg, animate = false) {

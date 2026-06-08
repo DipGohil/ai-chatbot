@@ -1,5 +1,6 @@
 import { api, ApiError, CHAT_TIMEOUT_MS } from "./api.js";
 import { MODEL_STORAGE_KEY, STORAGE_KEY } from "./config.js";
+import { copyCodeFromButton } from "./markdown.js";
 import {
   bindSidebarResize,
   initSidebarWidth,
@@ -567,7 +568,18 @@ function bindEvents() {
     }
   });
 
-  $("message-list")?.addEventListener("click", (e) => {
+  $("message-list")?.addEventListener("click", async (e) => {
+    const copyBtn = e.target.closest("[data-copy-code]");
+    if (copyBtn) {
+      e.preventDefault();
+      try {
+        await copyCodeFromButton(copyBtn);
+      } catch {
+        showToast("Failed to copy", true);
+      }
+      return;
+    }
+
     if (e.target.closest("[data-cancel-chat]")) {
       cancelChatRequest();
     }
