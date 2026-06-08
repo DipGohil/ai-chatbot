@@ -653,9 +653,6 @@ body.sidebar-resizing .main {
 .message__body {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: min(72%, 680px);
-  padding: 0.95rem 1.15rem;
-  border-radius: 16px;
   line-height: 1.72;
   overflow-wrap: anywhere;
   word-break: normal;
@@ -663,6 +660,8 @@ body.sidebar-resizing .main {
 
 .message--user .message__body {
   max-width: min(72%, 620px);
+  padding: 0.95rem 1.15rem;
+  border-radius: 16px;
   background: var(--bg-user);
   border: 1px solid rgba(126, 184, 255, 0.15);
   color: #f4f7ff;
@@ -673,15 +672,17 @@ body.sidebar-resizing .main {
 }
 
 .message--assistant .message__body {
-  max-width: min(86%, 720px);
-  background: #17191f;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f0f1f4;
+  flex: 1;
+  max-width: none;
+  padding: 0.15rem 0 0.85rem;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--text);
   font-size: 1rem;
   font-weight: 400;
   letter-spacing: 0;
-  border-top-left-radius: 6px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
 }
 
 .message__body p {
@@ -1043,8 +1044,10 @@ body.sidebar-resizing .main {
     gap: 0.65rem;
   }
 
-  .message__body,
-  .message--user .message__body,
+  .message--user .message__body {
+    max-width: calc(100% - 42px);
+  }
+
   .message--assistant .message__body {
     max-width: calc(100% - 42px);
   }
